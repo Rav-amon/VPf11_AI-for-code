@@ -1,0 +1,440 @@
+openapi: 3.1.0
+info:
+  title: API пользователей
+  version: 1.0.0
+  summary: Создание пользователя, чтение по id и короткий список активных.
+  description: |
+    Контракт HTTP API из `api.py` и `go-server`. Оба сервера слушают
+    `http://127.0.0.1:5000` и возвращают один и тот же JSON.
+
+    Аутентификации нет. Повторяющиеся имена разрешены. Крайние пробелы имени
+    отбрасываются. После этого имя должно содержать от 1 до 200 символов.
+
+    Список активных id хранится в памяти процесса, не длиннее 5 элементов,
+    и очищается при остановке сервера. Один и тот же id может повторяться.
+    Шестая отметка вытесняет самую старую.
+
+    Сервер на Go дополнительно отклоняет тело больше 1 МБ кодом `invalid_body`.
+servers:
+  - url: http://127.0.0.1:5000
+    description: Локальный сервер Python или Go
+tags:
+  - name: users
+    description: Записи пользователей в SQLite
+  - name: active-users
+    description: Короткий список активных id в памяти процесса
+paths:
+  /api/v1/users:
+    post:
+      tags: [users]
+      operationId: createUser
+      summary: Создать пользователя
+      description: |
+        Сохраняет имя и возвращает новый id. Неизвестные поля тела игнорируются.
+        Отсутствующее, пустое, слишком длинное или нестроковое имя даёт
+        `invalid_name`, а не другой код.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateUserRequest"
+            examples:
+              valid:
+                summary: Обычное имя
+                value:
+                  name: Анна
+      responses:
+        "201":
+          description: Пользователь создан
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UserCreatedResponse"
+              example:
+                data:
+                  id: 1
+                error: null
+                message: Пользователь создан
+        "400":
+          description: Тело не является JSON-объектом или имя не проходит проверку
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              examples:
+                invalidBody:
+                  summary: Тело не JSON-объект
+                  value:
+                    data: null
+                    error:
+                      code: invalid_body
+                      message: Тело запроса должно быть JSON-объектом
+                      details: {}
+                    message: Тело запроса должно быть JSON-объектом
+                emptyName:
+                  summary: Пустое имя
+                  value:
+                    data: null
+                    error:
+                      code: invalid_name
+                      message: Имя должно быть непустым и не длиннее допустимого
+                      details:
+                        max_length: 200
+                    message: Имя должно быть непустым и не длиннее допустимого
+                wrongType:
+                  summary: Имя не строка
+                  value:
+                    data: null
+                    error:
+                      code: invalid_name
+                      message: Имя должно быть строкой
+                      details:
+                        received_type: int
+                    message: Имя должно быть строкой
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "500":
+          $ref: "#/components/responses/ServerError"
+  /api/v1/users/{userId}:
+    get:
+      tags: [users]
+      operationId: getUser
+      summary: Прочитать пользователя
+      parameters:
+        - $ref: "#/components/parameters/UserId"
+      responses:
+        "200":
+          description: Пользователь найден
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UserFoundResponse"
+              example:
+                data:
+                  id: 1
+                  name: Анна
+                error: null
+                message: Пользователь найден
+        "400":
+          description: Идентификатор меньше 1
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                data: null
+                error:
+                  code: invalid_user_id
+                  message: Идентификатор пользователя должен быть положительным целым
+                  details: {}
+                message: Идентификатор пользователя должен быть положительным целым
+        "404":
+          description: Нет записи с таким id либо сегмент пути не является целым числом
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              examples:
+                missingUser:
+                  summary: Запись не найдена
+                  value:
+                    data: null
+                    error:
+                      code: user_not_found
+                      message: Пользователь не найден
+                      details:
+                        user_id: 999999
+                    message: Пользователь не найден
+                notAnInteger:
+                  summary: Сегмент пути не целое число
+                  value:
+                    data: null
+                    error:
+                      code: not_found
+                      message: Маршрут не найден
+                      details: {}
+                    message: Маршрут не найден
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "500":
+          $ref: "#/components/responses/ServerError"
+  /api/v1/users/{userId}/active:
+    post:
+      tags: [active-users]
+      operationId: markUserActive
+      summary: Отметить пользователя активным
+      description: |
+        Пользователь должен уже существовать. Тело запроса не используется.
+        В ответе текущий список активных id, не длиннее 5 элементов.
+      parameters:
+        - $ref: "#/components/parameters/UserId"
+      responses:
+        "200":
+          description: Пользователь отмечен активным
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ActiveUsersResponse"
+              example:
+                data:
+                  active_user_ids: [1]
+                error: null
+                message: Пользователь отмечен активным
+        "400":
+          description: Идентификатор меньше 1
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              example:
+                data: null
+                error:
+                  code: invalid_user_id
+                  message: Идентификатор пользователя должен быть положительным целым
+                  details: {}
+                message: Идентификатор пользователя должен быть положительным целым
+        "404":
+          description: Пользователь не найден либо сегмент пути не является целым числом
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+              examples:
+                missingUser:
+                  summary: Запись не найдена
+                  value:
+                    data: null
+                    error:
+                      code: user_not_found
+                      message: Пользователь не найден
+                      details:
+                        user_id: 999999
+                    message: Пользователь не найден
+                notAnInteger:
+                  summary: Сегмент пути не целое число
+                  value:
+                    data: null
+                    error:
+                      code: not_found
+                      message: Маршрут не найден
+                      details: {}
+                    message: Маршрут не найден
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "500":
+          $ref: "#/components/responses/ServerError"
+  /api/v1/active-users:
+    get:
+      tags: [active-users]
+      operationId: listActiveUsers
+      summary: Получить список активных id
+      responses:
+        "200":
+          description: Список активных пользователей получен
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ActiveListResponse"
+              example:
+                data:
+                  active_user_ids: [1]
+                error: null
+                message: Список активных пользователей получен
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+        "500":
+          $ref: "#/components/responses/ServerError"
+components:
+  parameters:
+    UserId:
+      name: userId
+      in: path
+      required: true
+      description: |
+        Целый идентификатор. Значение меньше 1 даёт `400` и код `invalid_user_id`.
+        Сегмент, который не является целым числом, не совпадает с маршрутом и
+        даёт `404` с кодом `not_found`.
+      schema:
+        type: integer
+        format: int64
+  responses:
+    MethodNotAllowed:
+      description: Метод не поддерживается этим маршрутом
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          example:
+            data: null
+            error:
+              code: method_not_allowed
+              message: Метод не поддерживается
+              details: {}
+            message: Метод не поддерживается
+    ServerError:
+      description: Сбой базы или необработанная ошибка сервера
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          examples:
+            database:
+              summary: Сбой SQLite
+              value:
+                data: null
+                error:
+                  code: database_error
+                  message: Не удалось выполнить операцию с базой данных
+                  details: {}
+                message: Не удалось выполнить операцию с базой данных
+            internal:
+              summary: Необработанная ошибка
+              value:
+                data: null
+                error:
+                  code: internal_error
+                  message: Внутренняя ошибка сервера
+                  details: {}
+                message: Внутренняя ошибка сервера
+  schemas:
+    CreateUserRequest:
+      type: object
+      additionalProperties: true
+      properties:
+        name:
+          type: string
+          description: |
+            Имя пользователя. Крайние пробелы отбрасываются. После этого в имени
+            должно быть от 1 до 200 символов. Поле можно не передавать: сервер
+            ответит `400` с кодом `invalid_name`.
+      examples:
+        - name: Анна
+    CreatedUser:
+      type: object
+      additionalProperties: false
+      required: [id]
+      properties:
+        id:
+          type: integer
+          minimum: 1
+          format: int64
+    User:
+      type: object
+      additionalProperties: false
+      required: [id, name]
+      properties:
+        id:
+          type: integer
+          minimum: 1
+          format: int64
+        name:
+          type: string
+          minLength: 1
+          maxLength: 200
+    ActiveUsers:
+      type: object
+      additionalProperties: false
+      required: [active_user_ids]
+      properties:
+        active_user_ids:
+          type: array
+          maxItems: 5
+          items:
+            type: integer
+            minimum: 1
+            format: int64
+          description: Последние активные id. Возможны повторы. Пустой список — `[]`.
+    ErrorObject:
+      type: object
+      additionalProperties: false
+      required: [code, message, details]
+      properties:
+        code:
+          type: string
+          enum:
+            - invalid_body
+            - invalid_name
+            - invalid_user_id
+            - user_not_found
+            - not_found
+            - method_not_allowed
+            - database_error
+            - internal_error
+        message:
+          type: string
+        details:
+          $ref: "#/components/schemas/ErrorDetails"
+    ErrorDetails:
+      type: object
+      additionalProperties: false
+      description: Набор полей зависит от кода ошибки. Для большинства кодов объект пустой.
+      properties:
+        received_type:
+          type: string
+          description: Тип полученного значения, если имя не является строкой.
+          examples: [int, float, bool, NoneType, list, dict]
+        max_length:
+          type: integer
+          const: 200
+          description: Допустимая длина имени после удаления крайних пробелов.
+        user_id:
+          type: integer
+          format: int64
+          description: Идентификатор, для которого не найдена запись.
+    ErrorResponse:
+      type: object
+      additionalProperties: false
+      required: [data, error, message]
+      properties:
+        data:
+          type: "null"
+        error:
+          $ref: "#/components/schemas/ErrorObject"
+        message:
+          type: string
+          description: Повторяет `error.message`.
+    UserCreatedResponse:
+      type: object
+      additionalProperties: false
+      required: [data, error, message]
+      properties:
+        data:
+          $ref: "#/components/schemas/CreatedUser"
+        error:
+          type: "null"
+        message:
+          const: Пользователь создан
+    UserFoundResponse:
+      type: object
+      additionalProperties: false
+      required: [data, error, message]
+      properties:
+        data:
+          $ref: "#/components/schemas/User"
+        error:
+          type: "null"
+        message:
+          const: Пользователь найден
+    ActiveUsersResponse:
+      type: object
+      additionalProperties: false
+      required: [data, error, message]
+      properties:
+        data:
+          $ref: "#/components/schemas/ActiveUsers"
+        error:
+          type: "null"
+        message:
+          const: Пользователь отмечен активным
+    ActiveListResponse:
+      type: object
+      additionalProperties: false
+      required: [data, error, message]
+      properties:
+        data:
+          $ref: "#/components/schemas/ActiveUsers"
+        error:
+          type: "null"
+        message:
+          const: Список активных пользователей получен
